@@ -22,10 +22,23 @@ function run_once() {
         nevents=("${EVENTS[@]:i:$NCOUNTERS}")
         nevents=${nevents[*]}
         e_arg=${nevents// /,}
-        sudo perf stat -x , -o out/$i.csv -e $e_arg $EXE --matrix $1 2>&1 > /dev/null
+        sudo $PERF/perf stat -j -o out/$i.json -e $e_arg $EXE --matrix $1 2>&1 > /dev/null
     done
-    cat out/*.csv | grep -o '^[^#]*' > $1.csv
+    cat out/*.json > $1.json
 }
+
+# install deps
+sudo apt update
+sudo apt install -y flex bison libelf-dev libtraceevent-dev
+sudo apt install -y pkg-config cmake python3-dev python3-numpy python3-scipy
+
+# build perf
+git clone --depth 1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+cd linux/tools/perf
+make
+PERF=$(pwd)
+
+cd $ROOT
 
 # build libsparsemat
 git clone https://github.com/uml-hpc/libsparsemat.git
@@ -38,7 +51,7 @@ cd $ROOT
 # build adsp utils
 git clone https://github.com/uml-hpc/adsp.git
 cd adsp && cd cpuid && make
-EVENTS=(`sudo $ADSP perf_list`)
+EVENTS=(`sudo $ADSP perf_list --perf-path $PERF`)
 
 cd $ROOT
 
