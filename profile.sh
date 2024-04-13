@@ -6,37 +6,22 @@ if [[ $# -eq 0 ]] ; then
 fi
 
 ROOT=$(pwd)
-EXE=$ROOT/libsparsemat/build/examples/main
-ADSP=$ROOT/adsp/adsp
-MAT_ERR=$ROOT/materror/materror
 DATA=$ROOT/data
 MAT_NAME=$1
 MAT_PATH=$DATA/$MAT_NAME/$MAT_NAME
-NCOUNTERS=4
-
-# Group events by counter and run perf
-function run_once() {
-    rm -rf out && mkdir -p out
-    for ((i = 0; i < ${#EVENTS[@]}; i += $NCOUNTERS))
-    do
-        nevents=("${EVENTS[@]:i:$NCOUNTERS}")
-        nevents=${nevents[*]}
-        e_arg=${nevents// /,}
-        sudo $PERF/perf stat -j -o out/$i.json -e $e_arg $EXE --matrix $1 2>&1 > /dev/null
-    done
-    cat out/*.json > $1.json
-}
+RUNS=5
 
 # install deps
 sudo apt update
 sudo apt install -y flex bison libelf-dev libtraceevent-dev
 sudo apt install -y pkg-config cmake python3-dev python3-numpy python3-scipy
+sudo apt install -y cargo rustc
 
 # build perf
 git clone --depth 1 https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
 cd linux/tools/perf
 make
-PERF=$(pwd)
+sudo cp perf /usr/local/bin
 
 cd $ROOT
 
@@ -45,18 +30,27 @@ git clone https://github.com/uml-hpc/libsparsemat.git
 cd libsparsemat && mkdir -p build && cd build
 cmake .. && make
 tests/cpu_test
+EXE=$ROOT/libsparsemat/build/examples/main
 
 cd $ROOT
 
 # build adsp utils
 git clone https://github.com/uml-hpc/adsp.git
 cd adsp && cd cpuid && make
-EVENTS=(`sudo $ADSP perf_list --perf-path $PERF`)
+ADSP=$ROOT/adsp/adsp
 
 cd $ROOT
 
 # build mat error
 git clone https://github.com/uml-hpc/materror.git
+MAT_ERR=$ROOT/materror/materror
+
+# build perf-rs
+git clone https://github.com/azzaouit/perf-rs.git
+cd perf-rs && cargo build --release
+PERF_RS=$ROOT/perf-rs/target/release/perf-rs
+
+cd $ROOT
 
 # Download data
 rm -rf $DATA && mkdir -p $DATA
@@ -67,18 +61,20 @@ cd $ROOT
 
 # Inject errors
 echo "Injecting Noise..."
-$MAT_ERR gaussian --matrix $MAT_PATH.mtx --error-rate 0.01 --injection-rate 0.01 --out ${MAT_PATH}_gauss_0p01_0p01.mtx
-$MAT_ERR gaussian --matrix $MAT_PATH.mtx --error-rate 0.01 --injection-rate 0.05 --out ${MAT_PATH}_gauss_0p01_0p05.mtx
-$MAT_ERR gaussian --matrix $MAT_PATH.mtx --error-rate 0.01 --injection-rate 0.10 --out ${MAT_PATH}_gauss_0p01_0p10.mtx
-$MAT_ERR gaussian --matrix $MAT_PATH.mtx --error-rate 0.05 --injection-rate 0.01 --out ${MAT_PATH}_gauss_0p05_0p01.mtx
-$MAT_ERR gaussian --matrix $MAT_PATH.mtx --error-rate 0.05 --injection-rate 0.05 --out ${MAT_PATH}_gauss_0p05_0p05.mtx
-$MAT_ERR gaussian --matrix $MAT_PATH.mtx --error-rate 0.05 --injection-rate 0.10 --out ${MAT_PATH}_gauss_0p05_0p10.mtx
-$MAT_ERR gaussian --matrix $MAT_PATH.mtx --error-rate 0.10 --injection-rate 0.01 --out ${MAT_PATH}_gauss_0p10_0p01.mtx
-$MAT_ERR gaussian --matrix $MAT_PATH.mtx --error-rate 0.10 --injection-rate 0.05 --out ${MAT_PATH}_gauss_0p10_0p05.mtx
-$MAT_ERR gaussian --matrix $MAT_PATH.mtx --error-rate 0.10 --injection-rate 0.10 --out ${MAT_PATH}_gauss_0p10_0p10.mtx
+for ERR_RATE in `seq .01 .01 .1`
+do
+    for INJ_RATE in `seq .01 .01 .1`
+    do
+        $MAT_ERR gaussian --matrix $MAT_PATH.mtx\
+            --error-rate $ERR_RATE\
+            --injection-rate $INJ_RATE\
+            --out ${MAT_PATH}_gauss_${ERR_RATE}_${INJ_RATE}.mtx
+    done
+done
 
 # Convert to CRS and run
 for FILE in $DATA/$MAT_NAME/*; do
     $ADSP mtx2crs --matrix $FILE --out $FILE.crs
-    run_once $FILE.crs
+    echo "Profiling $FILE"
+    sudo $PERF_RS  --runs $RUNS --out $FILE.json --bin $EXE -a --matrix $FILE
 done
