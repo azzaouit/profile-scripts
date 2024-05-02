@@ -46,7 +46,7 @@ git clone https://github.com/uml-hpc/materror.git
 MAT_ERR=$ROOT/materror/materror
 
 # build perf-rs
-git clone https://github.com/azzaouit/perf-rs.git
+git clone https://github.com/uml-hpc/perf-rs.git
 cd perf-rs && cargo build --release
 PERF_RS=$ROOT/perf-rs/target/release/perf-rs
 
